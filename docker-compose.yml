@@ -1,0 +1,173 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: aqua-postgres
+    environment:
+      POSTGRES_DB: aqua_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - aqua-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: aqua-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - aqua-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Data Service
+  data-service:
+    build:
+      context: .
+      dockerfile: ./data-service/Dockerfile
+    container_name: aqua-data-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: aqua_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      LOG_SERVICE_NAME: data-service
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - aqua-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Strategy Engine
+  strategy-engine:
+    build:
+      context: .
+      dockerfile: ./strategy-engine/Dockerfile
+    container_name: aqua-strategy-engine
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: aqua_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DATA_SERVICE_URL: http://data-service:5001
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      LOG_SERVICE_NAME: strategy-engine
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      data-service:
+        condition: service_healthy
+    networks:
+      - aqua-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Dashboard
+  dashboard:
+    build:
+      context: .
+      dockerfile: ./dashboard/Dockerfile
+    container_name: aqua-dashboard
+    environment:
+      DATA_SERVICE_URL: http://data-service:5001
+      STRATEGY_SERVICE_URL: http://strategy-engine:5002
+      LOG_LEVEL: INFO
+      LOG_FORMAT: pretty
+      LOG_SERVICE_NAME: dashboard
+    ports:
+      - "8501:8501"
+    depends_on:
+      - data-service
+      - strategy-engine
+    networks:
+      - aqua-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+networks:
+  aqua-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
