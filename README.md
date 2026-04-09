@@ -84,7 +84,7 @@ AQUA is an end-to-end automated trading research platform that demonstrates:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/raksha-rane/aqua.git
+git clone https://github.com/asmit404/aqua.git
 cd aqua
 ```
 
